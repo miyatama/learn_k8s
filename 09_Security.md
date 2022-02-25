@@ -947,3 +947,158 @@ np3-->|x|np4
 kubectl exec -it sample-pod-np1 -- curl --connect-timeout 3 http:10.8.1.17
 ```
 
+allow traffic to sample-pod-np2 from sample-pod-np1
+
+```mermaid
+graph LR
+
+subgraph Namespace:default
+  np1[app:np1]
+  np2[app:np2]
+end
+
+subgraph Namespace:nptest
+  np3[app:np3]
+  np4[app:np4]
+end
+
+np2-->|x|np3
+np2-->|x|np4
+np1-->|o|np2
+np3-->|x|np4
+```
+
+ex) sample-podselector-ingress-networkpolicy.yaml
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sample-podselector-ingress-networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: np2
+  policyType:
+    - Ingress
+  ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            app: np1
+      ports:
+        - protocol: TCP
+          port: 80
+```
+
+```shell
+kubectl apply -f sample-podselector-ingress-networkpolicy.yaml
+# check sample-pod-np2 ip address
+kubectl exec -it sample-pod-np1 -- curl --connect-timeout 3 http://10.8.1.17
+```
+
+allow traffic from specify namespace.
+
+```mermaid
+graph LR
+
+subgraph Namespace:default
+  np1[app:np1]
+  np2[app:np2]
+end
+
+subgraph Namespace:nptest
+  np3[app:np3]
+  np4[app:np4]
+end
+
+np2-->|o|np3
+np2-->|x|np4
+np1-->|o|np2
+np1-->|o|np3
+np1-->|x|np4
+np3-->|x|np4
+```
+
+ex) sample-namespaceselector-ingress-networkpolicy.yaml
+
+```yaml
+apiVersion: netwworking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sample-namespaceselector-ingress-networkpolicy
+  namespace: nptest
+spec:
+  podSelector:
+    matchLabels:
+      app: np3
+  policyType:
+    - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchlabels:
+          ns: default
+    ports:
+    - portocol: TCP
+      port: 80
+```
+
+```shell
+kubectl apply -f sample-namespaceselector-ingress-networkpolicy.yaml
+# check np3 ip address
+kubectl exec -it sample-pod-np1 -- curl --connect-timeout 3 http://10.8.1.18
+```
+
+allow specify ip block
+
+```mermaid
+graph LR
+
+subgraph Namespace:default
+  np1[app:np1]
+  np2[app:np2]
+end
+
+subgraph Namespace:nptest
+  np3[app:np3]
+  np4[app:np4]
+end
+
+np2-->|o|np3
+np2-->|x|np4
+np1-->|o|np2
+np1-->|o|np3
+np1-->|o|np4
+np3-->|x|np4
+```
+
+ex) sample-ipblock-ingress-networkpolicy.yaml
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sample-ipblock-ingress-networkpolicy
+  namespace: nptest
+spec:
+  podSelector:
+    matchLabels:
+      app: np4
+  policyType:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        # sample-pod-np1 ip address
+        cidr: 10.8.0.16/32
+    ports:
+    - protocol: TCP
+      port: 80
+```
+
+```shell
+kubectl apply -f sample-ipblock-ingress-networkpolicy.yaml
+# chekc np4 ip address
+kubectl exec -it sample-pod-np1 -- curl --connect-timeout 3 http://10.0.1.6
+```
