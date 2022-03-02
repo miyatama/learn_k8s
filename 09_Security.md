@@ -1102,3 +1102,391 @@ kubectl apply -f sample-ipblock-ingress-networkpolicy.yaml
 # chekc np4 ip address
 kubectl exec -it sample-pod-np1 -- curl --connect-timeout 3 http://10.0.1.6
 ```
+
+## Authentication, Authorization, Admission Control
+
+k8s register resource using phase Authentication, Authorization, Admission Control.
+
+```mermaid
+graph LR
+
+s1(AuthN)-->s2(AuthZ)
+s2-->s3(Admission Control)
+```
+
+Admisstion Controller provided by plugin.
+
++ NamespaceLifecycle
++ LimitRater
++ ServiceAccount
++ DefaultStorageClass
++ DefaultTolerationSeconds
++ MutatingAdmissionWebhook
++ ValidatingAdmissionWebhook
++ ResourceQuota
++ PodPreset
++ PersistentVolumeClaimResize
++ PodSecurityPolicy
+
+### PodPreset
+
+PodPreset Add Default Setting(Config and Storage) to Created Pod.`LimitRange` is resource default setting.
+
+usecase is 
+
++ add environment variable to pod having specify label.
++ assign /var/log PersistentVolume to pod having specify label.
+
+PodPreset addable information
+
++ env
++ envFrom
++ volumes
++ volumeMounts
+
+ex) sample-podpreset.yaml
+
+```yaml
+apiVersion: settings.k8s.io/v1alpha1
+kind: PodPreset
+metadata:
+  name: sample-podpreset
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: podpreset
+  env:
+  - name: SAMPLE_ENV
+    value: "SAMPLE_VALUE"
+  volumeMounts:
+  - mountPath: /cache
+    name: cache-volume
+  volume:
+  - name: cache-volume
+    emptyDir: {}
+```
+
+```shell
+kubectl apply -f sample-podpreset.yaml
+```
+
+ex) sample-preset-pod.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-preset-pod
+  labels:
+    app: podpreset
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:1.16
+```
+
+```shell
+kubectl apply -f sample-preset-pod.yaml
+kubectl get pod sample-preset-pod -o yaml
+```
+
+not overwrite setting when PodPreset collision to Pod declaration.
+
+ex) sample-podpreset-fail-pod.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-podpreset-fail-pod
+  namespace: default
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:1.16
+      env:
+      - name: SAMPLE_ENV
+        value: "SAMPLE_VALUE"
+```
+
+when exclude PodPreset then use `podpreset.admission.kubernetes.io/exclude:true`.
+
+ex) sample-preset-pod.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sample-preset-pod
+  annotations: 
+    podpreset.admission.kubernetes.io/exclude: "true"
+  labels:
+    app: podpreset
+spec:
+  containers:
+    - name: nginx-container
+      image: nginx:1.16
+```
+
+## Secret Encryption
+
+Secret encryption has 3 approach
+
++ kubesec
++ SealedSecret
++ ExternalSecret
+
+### kubesec
+
+kubesec is OSS for Secret Safety control.usable on GnuPG/Google Cloud KMS/AWS KMS.readable approach.
+
+installation
+
+```shell
+OS_TYPE=darwin
+OS_TYPE=linux
+VERSION=0.9.2
+sudo curl -o /usr/local/bin/kubesec \
+  -sL \
+  https://github.com/shyiko/kubesec/release/download/${VERSION}/kubesec-${VERSION}-${OS_TYPE}-amd64
+sudo chmod +x /usr/local/bin/kubesec
+```
+
+ex) sample-db-auth.yaml
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sample-db-auth
+type: Opaque
+data:
+  username: cm9vA==
+  password: fjepoawiu
+```
+
+#### use Google Cloud KMS
+
+neec `Google Cloud KMS` enabling.
+
+```shell
+gcloud auth application-default
+gcloud kms keyrings create sample-keyring --location global
+gcloud kms keys create \
+  --purpose encryption \
+  --keyring sample-keyring \
+  --location global \
+  kubesec-key
+gcloud kms keys list --keyring sample-keyring --location global
+```
+
+```shell
+kubesec encrypt -i  \
+  --key=gcp:projects/PROJECT/locations/global/keyRings/sample-keyring/cryptoKeys/kubesec-key \
+  sample-db-auth.yaml
+kubectl get secret sample-db-auth -o yaml
+kubesec decrypt -i sample-db-auth.yaml
+```
+
+#### use GnuPG
+
+create KeyRing and Encription Key.
+
+```shell
+# for Mac
+brew install gpg
+# for linux
+apk install gpg
+# create Keyring
+gpg --gen-key
+# encription
+kubesec encript -i \
+  key=gpg:fpoiwjaeoiewjfa \
+  sample-db-auth.yaml
+cat sample-db-auth.yaml
+```
+
+```yaml
+```
+
+decription
+
+```shell
+kubesec decrypt -i sample-db-auth.yaml
+```
+
+#### use Multi Key
+
+Multi key use for divide power.
+
+```shell
+kubesec encrypt -i \
+  --key=gpg:fksejpeaoiwjf \
+  --key=gpg:projects/PROJECT/locations/global/keyRings/sample-keyring/cryptKeys/kubesec-key \
+  sample-db-auth.yaml
+```
+
+### SealedSecret
+
+SealdSecret is OSS useing for safety control. It create key pair(purlic key and private key) into Kubernetes Cluster.use kubeseal command with latest public key when Secret resource exchange SealedSecret resource.
+
+installation
+
+```shell
+brew install kubeseal
+curl -L https://github.com/bitnami-labs/sealed-secrets/release/download/v0.12.4/kubeseal-linux-amd64 \
+  -o /usr/local/bin/kubeseal
+chmod +x /usr/local/bin/kubeseal
+# install SealedSecret
+kubectl apply -f http://github.com/bitnami-labs/sealed-secrets/release/download/v0.12.4/controller.yaml
+```
+
+create SealedSecret resource from Secret resource
+
+```shell
+kubeseal -o yaml < sample-db-auth.yaml > sample-db-auth.yaml
+```
+
+```yaml
+```
+
+ex) sealed-sample-db-auth.yaml
+
+```yaml
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimeStamp: null
+  name: sample-db-auth
+  namespace: default
+spec:
+  encryptedData:
+    password: f;weoija
+    username: fweoija
+  template:
+    metadata:
+      creationTimeStamp: null
+      name: sample-db-auth
+      namespace: default
+    type: Opaque
+```
+
+```shell
+kubectl get sealedsecret/sample-db-auth secret/sample-db-auth
+kubectl apply -f sealed-sample-db-auth.yaml
+kubectl get sealedsecret/sample-db-auth secret/sample-db-auth
+```
+
+do the key rotation when leak private key
+
+```shell
+kubectl -n kube-system exec -it sealed-secrets-controller-feoiajoij987 \
+  -- controller --key-cutoff-time "$(LANG=C data '+%a, %d %b %Y %T %z')"
+kubectl get secret -n kube-system \
+  -L sealedsecrets.bitnami.com/sealed-secret-key \
+  -l sealedsecrets.bitnami.com/sealed-secret-key
+```
+
+### ExternalSecret
+
+SealdSecret is OSS useing for safety control. Secret generated by ExternalSecret resource.
+
+```mermaid
+graph TD
+
+s4[GCP Secret Manager]
+s5[AWS Secret Manager]
+s6[Hashicorp Vault]
+
+s7[ExternalSecret]
+
+subgraph k8s
+  s1[ExternalSecret]
+  s2(External Secret Controller)
+  s3[Secret]
+end
+
+s7-->|kubectl apply|s1
+s2-->s4
+s2-->s5
+s2-->s6
+s1-->|input|s2
+s2-->|output|s3
+```
+
+providers
+
++ Alibaba Cloud KMS Secret Manager
++ AWS Secret Manager
++ Azule Key Value
++ GCP Secret Manager
++ Hashicorp Vault
+
+```shell
+export PROJECT=$(gcloud config get-value core/project)
+# cooperate GSA and KSA
+gcloud iam service-account create external-secret-gsa
+gcloud iam service-account add-iam-policy-binding \
+  --role roles/iam.workloadIdentifyUser \
+  --member "serviceAccount:${PROJECT}.svc.id.goog[default/sample-es-kubernetes-external-secrets]" \
+  external-secret-gsa@${PROJECT}.iam.gserviceaccount.com
+```
+
+deploy External Secret Controller
+
+```shell
+helm repo add external-secrets https://godaddy.github.io/kubernetes-external-secrets/
+helm repo update
+sed -i -e "s|_PROJECT_|${PROJECT}|g" value.yaml
+helm install sample-es \
+  external-secrets/kubernetes-external
+  --version 4.0.0 \
+  -f values.yaml
+```
+
+register secret information
+
+```shell
+# shoe secret information
+cat ./data.txt
+# This is ExternalSecret test data.
+gcloud secrets create sample-db-key \
+  --replication-policy automatic \
+  --data-file ./data.txt
+```
+
+grant access to GCP service account
+
+```shell
+gcloud beta secrets add-iam-policy-binding \
+  --project ${PROJECT} \
+  --role role/secretmanager.secretAccessor \
+  --member serviceAccount:external-secret-gsa@${PROJECT}.iam.gserviceaccount.com \
+  sample-gsm-key
+```
+
+ex) sample-external-secret.yaml
+
+```yaml
+apiVersion: kubernetes-client.io/v1
+kind: ExternalSecret
+metadata:
+  name: sample-external-secret
+spec:
+  backendType: gcpSecretManager
+  projectId: _PROJECT_
+  data:
+  - key: sample-gsm-key
+    name: sample-k8s-key
+    version: latest
+```
+
+create External Secret
+
+```shell
+sed -i -e "s|_PROJECT_|${PROJECT}|g" sample-external-secret.yaml
+kubectl apply -f sample-external-secret.yaml
+kubectl get secret sample-external-secret -o yaml
+kubectl get secret sample-external-secret -o jsonpath="{.data.sample-k8s-key}" | base64 -d
+```
