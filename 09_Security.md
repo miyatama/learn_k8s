@@ -1132,7 +1132,7 @@ Admisstion Controller provided by plugin.
 
 PodPreset Add Default Setting(Config and Storage) to Created Pod.`LimitRange` is resource default setting.
 
-usecase is 
+usecase is
 
 + add environment variable to pod having specify label.
 + assign /var/log PersistentVolume to pod having specify label.
